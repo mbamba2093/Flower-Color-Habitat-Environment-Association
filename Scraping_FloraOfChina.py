@@ -12,6 +12,8 @@ def Extract_description(taxon_id):
     base_url = "http://www.efloras.org/florataxon.aspx?flora_id=2&taxon_id="
     positive_words = ["Herbs", "Shrubs", "Trees", "Plants", "Climbers", "Creepers", "Stem", "Subshrubs", "Perennial", "Annuals","Caudex", "Roots", "Main", "Petals", "Sepals", "Rhizome", "Basal", "Rootstock", "Rosette", "Leaf"]
     ng_word = " after publication of the family treatment for the Flora of China."
+    # Indicates a descriptive paragraph when these positive_words are included
+    # Taxa containing 'ng_ward' do not have descriptive information
 
     response_species = requests.get(f"{base_url}{taxon_id}")
     if response_species.status_code != 200:
