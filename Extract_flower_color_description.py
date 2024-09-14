@@ -40,7 +40,7 @@ def Extract_features(desc1, openai_api_key):
     return modified_string
   
 openai_api_key = 'XXXXXXXXXX'
-Data_dir = "/media/masarubamba/vol1/Project/WebScraping/"
+Data_dir = "/Datadir/"
 pkl_list = sorted(glob.glob(f"{Data_dir}FOC*.pkl"))
 maxattempt = 5
 retry_interval = 300
