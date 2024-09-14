@@ -169,7 +169,7 @@ def Extract_taxalist(taxon_id, target = "non-volume", maxpages = 5):
 
 
 # Top page URL
-Taxa_data_out = "/media/masarubamba/vol1/Project/WebScraping/FOC_"
+Taxa_data_out = "/Outdir/FOC_"
 url_top = 'http://www.efloras.org/flora_page.aspx?flora_id=2'
 response_top = requests.get(url_top)
 
