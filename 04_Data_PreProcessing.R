@@ -1,112 +1,124 @@
-#############################
-# Unified Processing Script #
-#############################
+#############################################
+# Unified Processing Script
+# Comments have been added by ChatGPTo3-mini-high
+#############################################
 
-### 事前準備：必要なライブラリ・関数の読み込み
-source("R_function.R")        # Lc(), Search_GBIF() などの関数を含む
-source("GBIF_function.R")       # GBIF用の補助関数
-library(terra)                # rast()等の関数のため
-library(raster)               # WorldClimデータ取得用
-library(taxize)               # 分類学情報取得用
-library(FactoMineR)           # PCA解析用
-library(stringr)              # 文字列処理用
+# Load required helper functions and libraries
+source("R_function.R")        # Contains helper functions (e.g., Lc(), etc.)
+source("GBIF_function.R")       # Contains functions for GBIF data retrieval
+library(terra)                # For handling GeoTiff raster files
+library(raster)               # For downloading WorldClim data
+library(taxize)               # For taxonomic information retrieval
+library(FactoMineR)           # For PCA analysis
+library(stringr)              # For string manipulation
 
-#############################
-### Step 1. GBIF検索      ###
-#############################
-# ※初期のデータはGPT4o_all_fin.csvとTRY_data_categ_fin.csvから読み込む
-
+#############################################
+# Step 0: Prepare Unique Species List
+#############################################
+# Read the two initial CSV files containing species data
 Data_dir <- "InputData/"
-# 2つのファイルから読み込み
 file1 <- Lc(Data_dir, "GPT4o_all_fin.csv")
 file2 <- Lc(Data_dir, "TRY_data_categ_fin.csv")
 data1 <- read.csv(file1, header = TRUE)
 data2 <- read.csv(file2, header = TRUE)
 
-# 両ファイルの"Species"列を統合し重複を除く
-species_vec <- unique(c(data1$Species, data2$Species))
-Species_df <- data.frame(Species = species_vec, stringsAsFactors = FALSE)
-Species_df$GBIF_search <- "NotYet"
+# Extract the "Species" column from both files and combine them
+species_list <- unique(c(data1$Species, data2$Species))
+Species_df <- data.frame(Species = species_list, stringsAsFactors = FALSE)
+Species_df$GBIF_search <- "NotYet"  # Initialize GBIF search status
 
-# GBIF結果出力ディレクトリ
+#############################################
+# Step 1: Search GBIF Occurrence Information
+#############################################
+# Define output directory for GBIF results
 GBIF_Out_dir <- "GBIF_Output/"
 
-# 各種についてGBIFから出現データを取得
-for(i in 1:nrow(Species_df)) {
+# Loop over each unique species and search for occurrence data via GBIF
+for (i in 1:nrow(Species_df)) {
   sp_name <- Species_df[i, "Species"]
   cat(i, " : ", sp_name, "\n")
   
-  # すでにデータが存在していればスキップ
+  # Check if a GBIF result file already exists; if so, skip the search
   if (file.exists(Lc(GBIF_Out_dir, sp_name, ".csv"))) {
     Species_df[i, "GBIF_search"] <- "Success"
-    cat("  skip (既存ファイル)\n")
+    cat("  Skip: File exists\n")
     next
   }
   
-  # GBIFからデータ取得（Search_GBIF関数を利用）
+  # Retrieve occurrence data from GBIF using the helper function
   Sp_loc <- Search_GBIF(sp_name)
+  
+  # If data retrieval is successful, save the results; otherwise, record the error
   if (mode(Sp_loc) == "list") {
     Species_df[i, "GBIF_search"] <- "Success"
     write.csv(Sp_loc, Lc(GBIF_Out_dir, sp_name, ".csv"))
   } else {
-    Species_df[i, "GBIF_search"] <- Sp_loc  # 失敗理由等を記録
+    Species_df[i, "GBIF_search"] <- Sp_loc  # Record error message
     next
   }
 }
-# GBIF検索結果一覧を保存
+# Save the updated species list with GBIF search status
 write.csv(Species_df, Lc(GBIF_Out_dir, "Processed_SpeciesData.csv"))
 
-#############################
-### Step 2. 環境データ付加  ###
-#############################
-# ※ここでは土壌パラメータなどのGeoTiff(.vrt)ファイルを読み込み，
-#    各種GBIF出現データに環境情報を付加します。
+#############################################
+# Step 2: Adding Environmental Information to Occurrence Data
+#############################################
+# --- Load Environmental Raster Data ---
 
-# --- 土壌パラメータ（GeoTiff）の読み込み ---
+# Load soil parameter GeoTiff files (.vrt)
 GeoTiff_dir1 <- "Environmental_Data/Soil/"
 GeoTiff1_list <- list.files(GeoTiff_dir1, pattern = ".vrt")
 GeoTiff1 <- list()
-for(i in 1:length(GeoTiff1_list)) {
+for (i in 1:length(GeoTiff1_list)) {
   GeoTiff1[[i]] <- rast(Lc(GeoTiff_dir1, GeoTiff1_list[i]))
 }
 
-# --- WRB土壌分類データの読み込み ---
+# Load WRB soil classification GeoTiff files (.vrt)
 GeoTiff_dir2 <- "Environmental_Data/Soil/WRB/"
 GeoTiff2_list <- list.files(GeoTiff_dir2, pattern = ".vrt")
 GeoTiff2 <- list()
-for(i in 1:length(GeoTiff2_list)) {
+for (i in 1:length(GeoTiff2_list)) {
   GeoTiff2[[i]] <- rast(Lc(GeoTiff_dir2, GeoTiff2_list[i]))
 }
-cat("TIFFファイルをロードしました。\n")
+cat("TIFF files have been loaded.\n")
 
-# --- 各種GBIF出現データに土壌環境データを追加 ---
-Loc_dir <- "GBIF_Processed_Data/"  # GBIF出現データ格納ディレクトリ
+# --- Process Each GBIF Occurrence File ---
+
+# Directory containing species-specific GBIF occurrence data
+Loc_dir <- "GBIF_Processed_Data/"
 Loc_list <- list.files(Loc_dir, pattern = ".csv")
 endnum <- length(Loc_list)
 pb <- txtProgressBar(min = 0, max = endnum, style = 3)
 startnum <- 1
 
+# Loop over each occurrence file to add soil environmental data
 for (filename in Loc_list) {
   gbif_data <- read.csv(Lc(Loc_dir, filename), header = TRUE, row.names = 1)
   
-  # 各GeoTiffファイルから土壌環境データを抽出
+  # For each soil parameter raster, extract the corresponding environmental data
   for (i in 1:length(GeoTiff1)) {
     gbif_data <- Get_soilenv(gbif_data, GeoTiff1[[i]])
   }
+  # Similarly, extract WRB soil classification data
   for (i in 1:length(GeoTiff2)) {
     gbif_data <- Get_soilenv(gbif_data, GeoTiff2[[i]])
   }
   
+  # Save the updated occurrence data
   write.csv(gbif_data, Lc(Loc_dir, filename))
   setTxtProgressBar(pb, startnum)
   startnum <- startnum + 1
 }
 
-# --- 気候データ（WorldClim）の抽出 ---
+# --- Climate Data Extraction ---
+# Define output directory for climate-enhanced data
 Out_dir_WorldClim <- "GBIF_Processed_Data_WorldClim/"
-Clim_alt <- raster::getData('worldclim', var = 'alt', res = 5)  # 標高
-Clim_bio <- raster::getData('worldclim', var = 'bio', res = 5)  # 生物気候変数
 
+# Download climate data from WorldClim (using a 5 arc-minute resolution here)
+Clim_alt <- raster::getData('worldclim', var = 'alt', res = 5)  # Elevation data
+Clim_bio <- raster::getData('worldclim', var = 'bio', res = 5)  # Bioclimatic variables
+
+# Process each occurrence file for climate data extraction
 Loc_list <- list.files(Loc_dir, pattern = ".csv")
 endnum <- length(Loc_list)
 pb <- txtProgressBar(min = 0, max = endnum, style = 3)
@@ -114,50 +126,53 @@ startnum <- 1
 
 for (filename in Loc_list) {
   gbif_data <- read.csv(Lc(Loc_dir, filename), header = TRUE, row.names = 1)
+  
+  # Create a data frame of coordinates from occurrence data
   Sp_loc <- data.frame(lon = gbif_data$decimalLongitude,
                        lat = gbif_data$decimalLatitude)
+  
+  # Extract climate and elevation data based on coordinates
   Clim_df <- Extract_clim(Sp_loc, Clim_bio)
   Alt_df <- Extract_clim(Sp_loc, Clim_alt)
+  
+  # Combine the new climate data with the occurrence data
   gbif_data <- cbind(gbif_data, Clim_df, Alt_df)
   write.csv(gbif_data, Lc(Out_dir_WorldClim, filename))
   setTxtProgressBar(pb, startnum)
   startnum <- startnum + 1
 }
 
-#############################
-### Step 3. 分類学チェック ###
-#############################
-# ※ここではFoC（Flora of China）用データとTRY用データそれぞれに対して
-#    taxizeパッケージを用いた分類学情報の取得と必要に応じた手動修正を行います。
-
-#### ① FoCデータの分類学情報の追加 ####
+#############################################
+# Step 3: Taxonomy Check with taxize and Manual Editing
+#############################################
+# --- Part A: Flora of China (FoC) Data ---
 Data_file <- "Data/FoC_Data.csv"
 Data <- read.csv(Data_file, header = TRUE, row.names = 1)
 Genus_list <- unique(Data$Genus)
 
-# NCBIからtaxonomic IDを取得（eudicots）
+# Fetch taxonomic IDs for eudicots from NCBI
 id_list <- get_uid(Genus_list, ask = FALSE, division_filter = "eudicots")
 id_list_result <- attributes(id_list)
 Genus_found <- Genus_list[!is.na(id_list_result$uri)]
 Genus_notfound <- Genus_list[is.na(id_list_result$uri)]
 
-# 試行としてmonocotsもチェック
+# Attempt to fetch IDs for monocots from the not found list
 id_list2 <- get_uid(Genus_notfound, ask = FALSE, division_filter = "monocots")
 id_list2_result <- attributes(id_list2)
 Genus_monocots <- Genus_notfound[!is.na(id_list2_result$uri)]
 Genus_notfound2 <- Genus_notfound[is.na(id_list2_result$uri)]
 
-# 該当するFamilyリストを取得
+# Fetch taxonomic IDs for families for remaining genera
 Family_list <- unique(Data[Data$Genus %in% Genus_notfound2, "Family"])
 id_list3 <- get_uid(Family_list, ask = FALSE)
 
-# 各分類学階層を取得
+# Retrieve classification hierarchy from NCBI
 class_1 <- classification(id_list, db = "ncbi")
 class_2 <- classification(id_list2, db = "ncbi")
 class_3 <- classification(id_list3, db = "ncbi")
 rank_cols <- c("genus", "family", "order", "class", "phylum", "kingdom")
 
-# 分類学情報抽出用関数
+# Function to extract taxonomy information from classification data
 extract_taxonomy <- function(class_list, genus_list) {
   result_df <- data.frame(matrix(nrow = length(class_list), ncol = length(rank_cols)))
   rownames(result_df) <- genus_list
@@ -174,25 +189,26 @@ extract_taxonomy <- function(class_list, genus_list) {
   result_df <- na.omit(result_df)
   return(result_df)
 }
+
 Taxa_genus <- rbind(extract_taxonomy(class_1, Genus_found),
                     extract_taxonomy(class_2, Genus_monocots))
 Taxa_family <- extract_taxonomy(class_3, Family_list)
 
-# 必要に応じて手動修正（例：Acrocephalus）
+# Manually correct taxonomy if needed (example provided)
 Taxa_genus["Acrocephalus", ] <- c("Viridiplantae", "Streptophyta", "Magnoliopsida",
                                    "Lamiales", "Lamiaceae", "Acrocephalus")
 
-# 分類学データの保存
+# Save the taxonomic data for FoC
 write.csv(Taxa_genus, "Data/Taxa_Genus.csv")
 write.csv(Taxa_family, "Data/Taxa_Family.csv")
 
-# FoCデータへ分類学情報を統合
+# Merge the taxonomic information with the FoC species data
 Taxa_genus$Genus <- Taxa_genus$genus
 Taxa_family$Family <- Taxa_family$family
 Data2 <- merge(Data, Taxa_genus, by = "Genus", all.x = TRUE)
 Data2 <- merge(Data2, Taxa_family, by = "Family", all = TRUE)
 
-# 複数の列に分かれる情報を統合する関数
+# Function to consolidate taxonomic ranks across multiple columns
 consolidate_ranks <- function(df, rank_cols) {
   out_list <- vector("list", length(rank_cols))
   names(out_list) <- rank_cols
@@ -208,31 +224,30 @@ consolidate_ranks <- function(df, rank_cols) {
 rank_cols2 <- c("family", "order", "class", "phylum", "kingdom")
 out_df_tax <- consolidate_ranks(Data2, rank_cols2)
 
-# 必要な出力列を選択し最終データを作成
-out_colnames <- c("Species", "White", "Yellow", "Red", "Blue", "Purple",
-                  "Green", "NoDescription", "GBIF_data", "GBIF_datacount")
+# Define output columns and create the final FoC dataset
+out_colnames <- c("Species", "White", "Yellow", "Red", "Blue", "Purple", "Green",
+                  "NoDescription", "GBIF_data", "GBIF_datacount")
 Final_Taxonomy_Data <- cbind(Data2[out_colnames], out_df_tax)
 Final_Taxonomy_Data <- Final_Taxonomy_Data[!duplicated(Final_Taxonomy_Data), ]
 write.csv(Final_Taxonomy_Data, "Data/Final_Taxonomy_Data.csv")
 
-#### ② TRYデータの分類学情報の追加 ####
+# --- Part B: TRY Data ---
 Data_file <- "Data/TRY_data.csv"
 Data <- read.csv(Data_file, header = TRUE, row.names = 1)
+# Extract genus names from the species names in TRY data
 Genus_list <- sapply(strsplit(Data$AccSpeciesName, " "), `[`, 1)
 Genus_list_unique <- unique(Genus_list)
 
-# NCBIからID取得
+# Retrieve taxonomic IDs from NCBI for TRY data
 id_list <- get_uid(Genus_list_unique, ask = FALSE)
 id_list_result <- attributes(id_list)
 Genus_found <- Genus_list_unique[!is.na(id_list_result$uri)]
 Genus_notfound <- Genus_list_unique[is.na(id_list_result$uri)]
 class_1 <- classification(id_list, db = "ncbi")
-
-# 同じ関数を利用して分類学情報抽出
 rank_cols <- c("genus", "family", "order", "class", "phylum", "kingdom")
 out_df1 <- extract_taxonomy(class_1, Genus_found)
 
-# 手動で補完すべき分類群をデータフレームで作成（例）
+# Provide manual corrections for missing TRY taxonomy
 manual_df <- data.frame(
   Atadinus = c("Viridiplantae", "Streptophyta", "Magnoliopsida", "Rosales", "Rhamnaceae", "Atadinus"),
   Schlagintweitia = c("Viridiplantae", "Streptophyta", "Magnoliopsida", "Asterales", "Asteraceae", "Schlagintweitia"),
@@ -260,28 +275,29 @@ manual_df <- data.frame(
 )
 manual_df <- data.frame(t(manual_df))
 Taxa_genus_TRY <- rbind(manual_df, out_df1)
-# ※必要に応じて列名や順序を調整してください
 write.csv(Taxa_genus_TRY, "Data/Taxa_TRY_Genus.csv")
 
+# Merge taxonomic information with TRY species data
 Taxa_genus_TRY$Genus <- Taxa_genus_TRY$genus
 Data$Genus <- Genus_list
 Data2_TRY <- merge(Data, Taxa_genus_TRY, by = "Genus", all.x = TRUE)
 write.csv(Data2_TRY, "Data/TRY_Final_Processed.csv", row.names = FALSE)
 
-#############################
-### Step 4. TRYデータとFoCデータの統合 ###
-#############################
-# ※ここでは両データセットを読み込み、種名の正規化や各種カラムの整備後に統合します
+#############################################
+# Step 4: Merge TRY Data and Flora of China Data
+#############################################
+library(stringr)
 
+# Define file paths for the preprocessed FoC and TRY datasets
 foc_file <- "Data/FoC_fin_20240723.csv"
 try_file <- "Data/TRY_fin_20240729.csv"
 merged_file <- "Data/Data_merged_FoC_TRY_20240730.csv"
 
-# データ読み込み
+# Read the datasets
 Data1 <- read.csv(foc_file, header = TRUE, row.names = 1)
 Data2 <- read.csv(try_file, header = TRUE, row.names = 1)
 
-# Data1：種名からgenus抽出，種名の大文字小文字統一
+# Extract genus from species names in the FoC dataset and standardize species names
 Data1$genus <- sapply(strsplit(Data1$Species, " "), `[`, 1)
 capitalize_species <- function(x) {
   paste0(toupper(substr(x, 1, 1)), tolower(substr(x, 2, nchar(x))))
@@ -289,23 +305,22 @@ capitalize_species <- function(x) {
 Data1$Species <- sapply(Data1$Species, capitalize_species)
 Data2$Species <- sapply(Data2$Species, capitalize_species)
 
-# データセット識別子の付加
+# Add dataset identifiers
 Data1$Datasets <- "FoC"
 Data2$Datasets <- "TRY"
+
+# Save preprocessed datasets (if needed)
 write.csv(Data1, "Data/FoC_fin_20240730.csv", row.names = FALSE)
 write.csv(Data2, "Data/TRY_fin_20240730.csv", row.names = FALSE)
 
-# 両データセットの結合
+# Combine the datasets
 Data_merge <- rbind(Data1, Data2)
 color_cols <- c("White", "Yellow", "Red", "Blue", "Purple", "Green", "NoDescription")
-rank_cols <- c("genus", "family", "order", "class", "phylum", "kingdom",
-               "GBIF_data", "GBIF_datacount")
+rank_cols <- c("genus", "family", "order", "class", "phylum", "kingdom", "GBIF_data", "GBIF_datacount")
 
-# 重複種リストの抽出（複数データセットに現れる種）
+# Identify species present in both datasets and aggregate their color data (binary)
 sp_count <- table(Data_merge$Species)
 multisp_list <- names(sp_count[sp_count > 1])
-
-# 重複種について色データを集約（存在するかを二値化）
 out_df_color <- data.frame(matrix(nrow = 0, ncol = length(color_cols)))
 for (species in multisp_list) {
   temp_df <- Data_merge[Data_merge$Species == species, color_cols]
@@ -316,7 +331,7 @@ colnames(out_df_color) <- color_cols
 out_df_color$Species <- multisp_list
 out_df_color <- out_df_color[order(out_df_color$Species), ]
 
-# 重複種のうち1件のみを代表として処理
+# Process species appearing in both datasets
 Data_merge_multi <- Data_merge[Data_merge$Species %in% multisp_list, ]
 Data_merge_multi <- Data_merge_multi[!duplicated(Data_merge_multi$Species), ]
 Data_merge_multi <- Data_merge_multi[order(Data_merge_multi$Species), ]
@@ -324,7 +339,7 @@ Data_merge_multi$FoC <- 1
 Data_merge_multi$TRY <- 1
 Data_merge_multi <- cbind(out_df_color, Data_merge_multi[rank_cols])
 
-# 単独種の処理
+# Process species appearing in only one dataset
 Data_merge_single <- Data_merge[!Data_merge$Species %in% multisp_list, ]
 Data_merge_single$FoC <- 0
 Data_merge_single$TRY <- 0
@@ -332,23 +347,23 @@ Data_merge_single$FoC[Data_merge_single$Species %in% Data1$Species] <- 1
 Data_merge_single$TRY[Data_merge_single$Species %in% Data2$Species] <- 1
 Data_merge_single <- Data_merge_single[, colnames(Data_merge_single) != "Datasets"]
 
-# 単独種と複数種のデータを統合
+# Combine and save the merged dataset
 Data_merged <- rbind(Data_merge_single, Data_merge_multi)
 Data_merged <- Data_merged[order(Data_merged$Species), ]
 write.csv(Data_merged, merged_file, row.names = FALSE)
 
-# --- 欠損している分類学情報の補完 ---
+# Resolve missing taxonomy data by borrowing known taxonomic ranks
 Data_merged <- read.csv(merged_file, header = TRUE, row.names = 1)
 Notaxa_family <- unique(Data_merged[Data_merged$kingdom == "NoData", "family"])
 for (family in Notaxa_family) {
   temp_df <- Data_merged[Data_merged$family == family, ]
   if (nrow(temp_df) == 1) {
-    print(paste("Manual review:", family))
+    print(family)
     next
   }
   temp_df_valid <- temp_df[temp_df$kingdom != "NoData", rank_cols]
   if (nrow(temp_df_valid) == 0) {
-    print(paste("No valid taxonomy:", family))
+    print(family)
     next
   }
   temp_df_valid <- temp_df_valid[1, rank_cols]
@@ -359,104 +374,105 @@ for (family in Notaxa_family) {
 write.csv(Data_merged, merged_file, row.names = FALSE)
 Data_merged <- read.csv(merged_file, header = TRUE, row.names = 1)
 
-#############################
-### Step 5. 環境データ前処理  ###
-#############################
-# ※GBIF出現データに基づき，各種環境・土壌パラメータの集約値を計算します
-
-# 入力種リスト（種ごとに1行）
+#############################################
+# Step 5: Environmental Data Preprocessing
+#############################################
+# Load the merged species occurrence data
 Data <- read.csv("InputData/MergedSpeciesData.csv", header = TRUE, row.names = 1)
 Loc_dir <- "GBIF_Processed_Data/"
 Loc_list <- list.files(Loc_dir, pattern = ".csv")
 
-# 使用する環境変数名（WorldClim等）
-env_cols <- c("bio1", "bio2", "bio3", "bio4", "bio5", "bio6", "bio7", "bio8",
-              "bio9", "bio10", "bio11", "bio12", "bio13", "bio14", "bio15",
-              "bio16", "bio17", "bio18", "bio19", "Alt_df")
-soil_cols <- c("bdod_0.5cm_mean", "cec_0.5cm_mean", "cfvo_0.5cm_mean",
-               "clay_0.5cm_mean", "nitrogen_0.5cm_mean", "ocd_0.5cm_mean",
-               "ocs_0.30cm_mean", "phh2o_0.5cm_mean", "sand_0.5cm_mean",
-               "silt_0.5cm_mean", "soc_0.5cm_mean")
+# Check for the existence of environmental data files for each species
+file_exists <- c()
+for (sp in Data$Species) {
+  sp_file <- Lc(sp, ".csv")
+  file_exists <- c(file_exists, file.exists(Lc(Loc_dir, sp_file)))
+}
 
-# 各種について，該当するGBIF環境データファイルが存在するかチェック
-file_exists <- sapply(Data$Species, function(sp) {
-  file.exists(Lc(Loc_dir, paste0(sp, ".csv")))
-})
+# Define the environmental (climate) and soil parameter columns to extract
+env_cols <- c("bio1", "bio2", "bio3", "bio4", "bio5", "bio6", "bio7", "bio8", "bio9", "bio10",
+              "bio11", "bio12", "bio13", "bio14", "bio15", "bio16", "bio17", "bio18", "bio19", "Alt_df")
+soil_cols <- c("bdod_0.5cm_mean", "cec_0.5cm_mean", "cfvo_0.5cm_mean", "clay_0.5cm_mean", "nitrogen_0.5cm_mean",
+               "ocd_0.5cm_mean", "ocs_0.30cm_mean", "phh2o_0.5cm_mean", "sand_0.5cm_mean", "silt_0.5cm_mean",
+               "soc_0.5cm_mean")
+
+# Filter species for which GBIF environmental data files exist
 GBIF_sp <- Data$Species[file_exists]
 
-# 各種ごとに環境情報の要約（20%トリム平均など）を計算
+# Process each species to compute summary environmental statistics
 out_list <- list()
 for (sp in GBIF_sp) {
-  sp_file <- Lc(Loc_dir, paste0(sp, ".csv"))
-  env_df <- read.csv(sp_file, row.names = 1)
+  sp_file <- Lc(sp, ".csv")
+  env_df <- read.csv(Lc(Loc_dir, sp_file), row.names = 1)
   
-  # 対象列のみ抽出，NAと重複行を除去
+  # Remove rows with missing values and duplicates for the selected variables
   env_df <- na.omit(env_df[c(env_cols, soil_cols)])
   env_df <- env_df[!duplicated(env_df), ]
   
-  # 出現点が6点未満ならスキップ
+  # Skip species with fewer than 6 occurrence records
   if (nrow(env_df) < 6) next
   
+  # Compute the trimmed mean (20% trim) for each variable
   env_list <- apply(env_df, 2, function(x) mean(x, trim = 0.2))
-  # 土壌の環境変動（ユークリッド距離の平均）を追加
+  
+  # Compute soil heterogeneity using the average Euclidean distance among soil variables
   env_list["Soil_dist"] <- mean(dist(env_df[soil_cols], method = "euclidean"))
+  
+  # Record the number of accepted GBIF occurrence records and the species name
   env_list["GBIF_accept"] <- nrow(env_df)
   env_list["Species"] <- sp
   
   out_list[[sp]] <- env_list
 }
-out_df_env <- data.frame(t(data.frame(out_list)))
-# 元データと結合して保存
-out_df_env <- merge(Data, out_df_env, by = "Species", all = TRUE)
-write.csv(out_df_env, "OutputData/MergedSpeciesData_withEnvironment.csv")
+out_df <- data.frame(t(data.frame(out_list)))
 
-#############################
-### Step 6. PCAによる環境軸作成 ###
-#############################
-# ※必要に応じた外部関数を読み込み，環境変数（気候+土壌）を標準化後にPCAを実施します
+# Merge the computed environmental summaries with the original species data
+out_df <- merge(Data, out_df, by = "Species", all = TRUE)
+write.csv(out_df, "OutputData/MergedSpeciesData_withEnvironment.csv")
 
-source("Function_source.R")  # 必要な関数群の読み込み
+#############################################
+# Step 6: Create Environmental Axes using PCA
+#############################################
+source("Function_source.R")  # Load any additional required functions
 
+# Define input and output file paths for PCA results
 data_file <- "Data/Data_merged_Angiosperms_withEnvironment.csv"
 output_csv <- "Data/Data_for_Analysis.csv"
 output_pc_df <- "Output/PC_df"
 output_pca_rda <- "Output/Variable_PCA.rda"
 output_pca_coord <- "Output/PCA_coordinates.csv"
 
+# Read the dataset for analysis and remove rows missing GBIF occurrence information
 Data <- read.csv(data_file, header = TRUE, row.names = 1)
-# GBIF出現点数が存在する種のみを対象
 Data <- Data[!is.na(Data$GBIF_accept), ]
 
-# 環境変数のリスト
-env_cols <- c("bio1", "bio2", "bio3", "bio4", "bio5", "bio6", "bio7", "bio8",
-              "bio9", "bio10", "bio11", "bio12", "bio13", "bio14", "bio15",
-              "bio16", "bio17", "bio18", "bio19", "Alt_df")
-soil_cols <- c("bdod_0.5cm_mean", "cec_0.5cm_mean", "cfvo_0.5cm_mean",
-               "clay_0.5cm_mean", "nitrogen_0.5cm_mean", "ocd_0.5cm_mean",
-               "ocs_0.30cm_mean", "phh2o_0.5cm_mean", "sand_0.5cm_mean",
-               "silt_0.5cm_mean", "soc_0.5cm_mean", "Soil_dist")
+# Define the list of environmental and soil variables to include in the PCA
+env_cols <- c("bio1", "bio2", "bio3", "bio4", "bio5", "bio6", "bio7", "bio8", "bio9", 
+              "bio10", "bio11", "bio12", "bio13", "bio14", "bio15", "bio16", "bio17", "bio18", "bio19", "Alt_df")
+soil_cols <- c("bdod_0.5cm_mean", "cec_0.5cm_mean", "cfvo_0.5cm_mean", "clay_0.5cm_mean", 
+               "nitrogen_0.5cm_mean", "ocd_0.5cm_mean", "ocs_0.30cm_mean", "phh2o_0.5cm_mean", 
+               "sand_0.5cm_mean", "silt_0.5cm_mean", "soc_0.5cm_mean", "Soil_dist")
 variable_list <- c(env_cols, soil_cols)
 
-# 標準化してPCA実施（10主成分まで保持）
-Data[variable_list] <- scale(Data[variable_list])
-Variable_PCA <- PCA(Data[, variable_list], scale.unit = TRUE, ncp = 10, graph = FALSE)
-print(Variable_PCA$eig)      # 各PCの固有値（分散説明率）
-print(Variable_PCA$var$coord)  # 変数のPC空間上での座標
+# Standardize the variables before performing PCA
+Data[variable_list] <- apply(Data[variable_list], 2, scale)
 
-# 各サンプルのPC得点をデータフレームにまとめる
+# Perform PCA and retain 10 principal components
+Variable_PCA <- PCA(Data[, variable_list], scale.unit = TRUE, ncp = 10, graph = FALSE)
+print(Variable_PCA$eig)      # Print eigenvalues (variance explained)
+print(Variable_PCA$var$coord)  # Print variable coordinates in PCA space
+
+# Create a data frame of PCA scores for each species
 PC_names <- paste0("PC", 1:10)
 PC_df <- data.frame(Variable_PCA$ind$coord[, 1:10])
 colnames(PC_df) <- PC_names
 PC_df$Species <- Data$Species
 
-# 元データとPC得点を結合して保存
+# Merge the PCA scores with the original dataset and save the results
 Data <- merge(Data, PC_df, by = "Species", all = TRUE)
 write.csv(Data, output_csv, row.names = FALSE)
 save(PC_df, file = output_pc_df)
 save(Variable_PCA, file = output_pca_rda)
 write.csv(Variable_PCA$var$coord, output_pca_coord, row.names = TRUE)
 
-#############################
-# 処理完了
-#############################
-cat("全ての処理が完了しました。\n")
+cat("Processing complete.\n")
