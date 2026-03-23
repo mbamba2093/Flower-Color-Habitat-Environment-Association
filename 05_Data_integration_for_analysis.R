@@ -1,17 +1,4 @@
 # ============================================================
-# test4_readable_same_output.R
-# ------------------------------------------------------------
-# Purpose:
-#   Reorganized, easier-to-read version of test4.
-#
-# Important:
-#   This script is intentionally kept output-compatible with test3.
-#   To preserve strict output equivalence, potentially awkward behaviors
-#   from test3/test4 are also retained as-is.
-# ============================================================
-
-
-# ============================================================
 # 1) Load input datasets
 # ============================================================
 Data_GPT        <- read.csv("Data3/GPT4o_fin.csv",          header = T, row.names = 1)
